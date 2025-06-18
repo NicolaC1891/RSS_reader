@@ -1,14 +1,27 @@
 import aiohttp
 import asyncio
 from bs4 import BeautifulSoup
+from dataclasses import dataclass
 
 
+@dataclass
 class Parameters:
     """
     The class to receive and store cmd line arguments.
     """
-    def __init__(self, url):
-        self.url = url
+    url: str
+    to_json: bool = False
+    limit: int = None
+
+
+@dataclass
+class News:
+    """
+    The dataclass to store news item structure
+    """
+    title: str
+    date: str
+    article: str
 
 
 class RssReader:
@@ -19,8 +32,7 @@ class RssReader:
     def __init__(self):
         self.rss_data = None
         self.rss_channel = None
-        self.news_items = []
-        self.news_content = []
+        self.news_items = dict()
 
     @staticmethod
     async def get_data(url: str) -> str:
@@ -29,8 +41,8 @@ class RssReader:
         :param url: URL to get info from.
         :return: String with raw webpage data.
         """
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as response:
+        async with (aiohttp.ClientSession() as session):
+            async with session.get(url, timeout=10) as response:
                 return await response.text()
 
     def parse_rss_data(self) -> None:
@@ -40,26 +52,25 @@ class RssReader:
         :return: None. Updates class instance attrs.
         """
         extract = BeautifulSoup(self.rss_data, 'xml')
-        self.rss_channel = extract.find('channel').find('description').text
+        self.rss_channel = extract.find('channel').find('title').text
         all_items = extract.find_all('item')   # BS data object
 
         for item in all_items:
-            title = item.find('title').text
-            date = item.find('pubDate').text
-            link = item.find('link').text
-            self.news_items.append({'Title': title, 'Date': date, 'Link': link})
+            _title = item.find('title').text
+            _date = item.find('pubDate').text
+            _link = item.find('link').text
+            self.news_items[_link] = News(title=_title, date=_date, article="")
 
-    async def get_all_news(self) -> list:
+    async def get_all_news(self) -> None:
         """
-        Forms a pool of news links, retrieves all news content in async mode, extracts article texts.
-        :return: List with texts of each news article
+        Forms a pool of news links and futures, retrieves all news content in async mode,
+        extracts article texts.
+        :return: None. Updates dataclass attributes.
         """
-        urls = [item['Link'] for item in self.news_items]
-        tasks = []
-        for url in urls:
-            tasks.append(self.get_data(url))
-        html_pages = await asyncio.gather(*tasks)  # Non-parsed pages
-        return [self.parse_news(html) for html in html_pages]
+        tasks = {url: self.get_data(url) for url in self.news_items}
+        html_pages = await asyncio.gather(*tasks.values())  # Non-parsed pages
+        for url, html in zip(tasks.keys(), html_pages):
+            self.news_items[url].article = self.parse_news(html)
 
     @staticmethod
     def parse_news(html) -> str:
@@ -82,20 +93,16 @@ class RssReader:
         Prints all feed content (to be upgraded).
         :return: None.
         """
-        for item, content in zip(self.news_items, self.news_content):
+        for key, value in self.news_items.items():
             print(
                 f"Feed: {self.rss_channel}\n",
-                f"Title: {item['Title']}\n",
-                f"Date: {item['Date']}\n",
-                f"Article: {content}\n",
-                f"Link: {item['Link']}",
+                f"Title: {value.title}\n",
+                f"Date: {value.date}\n",
+                f"Article: {value.article}\n",
+                f"Link: {key}",
                 sep=''
             )
             print()
-
-
-class Logger:
-    pass
 
 
 async def main():
@@ -103,11 +110,11 @@ async def main():
     Main event loop
     :return:
     """
-    params = Parameters("https://feeds.bbci.co.uk/news/world/europe/rss.xml")   # Hardcoded/ Iteration 2
+    params = Parameters("http://news.rambler.ru/rss/politics/")
     reader = RssReader()
     reader.rss_data = await reader.get_data(params.url)
     reader.parse_rss_data()
-    reader.news_content = await reader.get_all_news()
+    await reader.get_all_news()
     reader.print_news()
 
 
