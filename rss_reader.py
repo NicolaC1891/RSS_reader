@@ -1,121 +1,69 @@
-import aiohttp
+import argparse
+import requests
+import feed_reader as fr
+import news_parser as npar
+import data_storage as ds
+import logger as log
 import asyncio
-from bs4 import BeautifulSoup
-from dataclasses import dataclass
 
 
-@dataclass
-class Parameters:
+def read_params() -> argparse.Namespace:
     """
-    The class to receive and store cmd line arguments.
+    Reads CLI parameters
+    :return: argparge.Namespace instance with CLI parameters stored in attributes
     """
-    url: str
-    to_json: bool = False
-    limit: int = None
+    parser = argparse.ArgumentParser(description="This is an RSS reader")
+    parser.add_argument("--source", type=str, help="RSS URL")  # remove --
+    parser.add_argument("--version", action="version", version="RSS Reader v.0.1")
+    parser.add_argument("--json", action="store_true", help="Print results as JSON in stdout")
+    parser.add_argument("--verbose", action="store_true", help="Output verbose status messages")
+    parser.add_argument("--limit", type=int, help="Limit new topics if this parameter is provided")
+    return parser.parse_args()
 
 
-@dataclass
-class News:
+def main():
     """
-    The dataclass to store news item structure
-    """
-    title: str
-    date: str
-    article: str
-
-
-class RssReader:
-    """
-    The class to apply the core reader functions.
+    Main app function
     """
 
-    def __init__(self):
-        self.rss_data = None
-        self.rss_channel = None
-        self.news_items = dict()
+    logger = log.create_logger()
 
-    @staticmethod
-    async def get_data(url: str) -> str:
-        """
-        Sends a http request and returns a response (string with XML or http data).
-        :param url: URL to get info from.
-        :return: String with raw webpage data.
-        """
-        async with (aiohttp.ClientSession() as session):
-            async with session.get(url, timeout=10) as response:
-                return await response.text()
+    # Read CLI parameters // set manually for integration testing
+    params = read_params()
+    params.source = "https://auto.onliner.by/feed"
+    params.verbose = True
+    params.limit = 5
+    params.json = True
+    log.setup_logger(params.verbose)
+    logger.info("Program launched")
 
-    def parse_rss_data(self) -> None:
-        """
-        Processes XML data: structures, extracts channel name, news items and their features,
-        then stores everything in RssReader instance attributes.
-        :return: None. Updates class instance attrs.
-        """
-        extract = BeautifulSoup(self.rss_data, 'xml')
-        self.rss_channel = extract.find('channel').find('title').text
-        all_items = extract.find_all('item')   # BS data object
+    rss_feed = fr.RssFeed(params.source)
 
-        for item in all_items:
-            _title = item.find('title').text
-            _date = item.find('pubDate').text
-            _link = item.find('link').text
-            self.news_items[_link] = News(title=_title, date=_date, article="")
+    try:
+        rss_feed.content = rss_feed.get_rss_data(logger=logger)
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Unable to access RSS feed: {e}")
+        logger.info("Program terminated")
+        return
 
-    async def get_all_news(self) -> None:
-        """
-        Forms a pool of news links and futures, retrieves all news content in async mode,
-        extracts article texts.
-        :return: None. Updates dataclass attributes.
-        """
-        tasks = {url: self.get_data(url) for url in self.news_items}
-        html_pages = await asyncio.gather(*tasks.values())  # Non-parsed pages
-        for url, html in zip(tasks.keys(), html_pages):
-            self.news_items[url].article = self.parse_news(html)
+    rss_feed.name, rss_feed.news_items = rss_feed.parse_rss_data(params.limit, logger=logger)
 
-    @staticmethod
-    def parse_news(html) -> str:
-        """
-        Parses a page with the news article.
-        :param html:  Non-parsed page from the parental function.
-        :return: String with article text.
-        """
-        soup = BeautifulSoup(html, 'html.parser')
-        article = soup.find('article')
-        if article:
-            paragraphs = article.find_all('p')
-            news_text = '\n'.join(paragraph.get_text() for paragraph in paragraphs)
-            return news_text
-        else:
-            return 'No article available'   # How to cover all http structure types???
+    html_news = asyncio.run(npar.get_news(rss_feed, logger=logger))
 
-    def print_news(self):
-        """
-        Prints all feed content (to be upgraded).
-        :return: None.
-        """
-        for key, value in self.news_items.items():
-            print(
-                f"Feed: {self.rss_channel}\n",
-                f"Title: {value.title}\n",
-                f"Date: {value.date}\n",
-                f"Article: {value.article}\n",
-                f"Link: {key}",
-                sep=''
-            )
-            print()
+    logger.info("Parsing articles...")
+    for url, html in zip(rss_feed.news_items, html_news):
+        rss_feed.news_items[url].article = npar.parse_news(html)
+    logger.info("Added article texts to news dataclasses")
+
+    if params.json:
+        ds.save_as_json(rss_feed.news_items, logger=logger)
+
+    for key, value in rss_feed.news_items.items():
+        print(value.title, value.date, value.article, key, sep="\n")
+        print()
+
+    logger.info("Program ended")
 
 
-async def main():
-    """
-    Main event loop
-    :return:
-    """
-    params = Parameters("http://news.rambler.ru/rss/politics/")
-    reader = RssReader()
-    reader.rss_data = await reader.get_data(params.url)
-    reader.parse_rss_data()
-    await reader.get_all_news()
-    reader.print_news()
-
-
-asyncio.run(main())
+if __name__ == "__main__":
+    main()
