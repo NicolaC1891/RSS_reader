@@ -28,3 +28,5 @@ def create_logger():
     handler.setFormatter(Formatter(fmt="[%(asctime)s: %(levelname)s] %(message)s"))
     logger.addHandler(handler)
     return logger
+
+logger = create_logger()

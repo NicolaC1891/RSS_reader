@@ -1,41 +1,19 @@
-import argparse
-import requests
 import feed_reader as fr
 import news_parser as npar
 import data_storage as ds
-import logger as log
+from logger import logger
 import asyncio
-
-
-def read_params() -> argparse.Namespace:
-    """
-    Reads CLI parameters
-    :return: argparge.Namespace instance with CLI parameters stored in attributes
-    """
-    parser = argparse.ArgumentParser(description="This is an RSS reader")
-    parser.add_argument("--source", type=str, help="RSS URL")  # remove --
-    parser.add_argument("--version", action="version", version="RSS Reader v.0.1")
-    parser.add_argument("--json", action="store_true", help="Print results as JSON in stdout")
-    parser.add_argument("--verbose", action="store_true", help="Output verbose status messages")
-    parser.add_argument("--limit", type=int, help="Limit new topics if this parameter is provided")
-    return parser.parse_args()
 
 
 def main():
     """
     Main app function
     """
+    rss_feeds = [
 
-    logger = log.create_logger()
+    ]
 
-    # Read CLI parameters // set manually for integration testing
-    params = read_params()
-    params.source = "https://auto.onliner.by/feed"
-    params.verbose = True
-    params.limit = 5
-    params.json = True
-    log.setup_logger(params.verbose)
-    logger.info("Program launched")
+
 
     rss_feed = fr.RssFeed(params.source)
 
@@ -66,4 +44,5 @@ def main():
 
 
 if __name__ == "__main__":
+    logger.info("Program launched")
     main()
