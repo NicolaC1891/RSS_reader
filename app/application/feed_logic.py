@@ -1,62 +1,95 @@
 import asyncio
+from asyncio import Queue
+from concurrent.futures import ThreadPoolExecutor
 
-import aiohttp
+from aiohttp import ClientSession
 from bs4 import BeautifulSoup
-
-from app.domain.models import Feed, NewsPiece
-
-
-async def fetch_feed(session, url: str) -> str:
-    async with session.get(url) as response:
-        if response.status != 200:
-            raise Exception("Server response error")  # С типами ошибок aiohttp разберусь позже.
-        return await response.text()
+from app.domain.models import Feed, NewsItem
 
 
-def parse_feed(text: str) -> Feed:
-    extract = BeautifulSoup(text, "lxml-xml")
+class FetchParseUseCase:
+    """
+    Use case that:
+       reads xml from feed
+       fetches the currently running loop (you asked for that!)
+       ... and here comes MAGIC )))))
+       I assume that parsing is CPU-heavy and want to delegate it to another thread.
+       This requires bypassing GIL, and I do that with lxml parsing (C code, not Python).
+       Thus, parsing is done by TPE thread and unblocks the loop - CONFIRMED.
+    """
 
-    channel_name = extract.find("channel").find("title").text
-    items = extract.find_all("item")  # BS data object
+    def __init__(self, session: ClientSession, executor: ThreadPoolExecutor, feed_url: str):
+        self.session = session
+        self.executor = executor
+        self.feed_url = feed_url
 
-    parsed_feed = Feed(channel_name)
+    async def execute(self) -> None:
+        """
+        Use case sequence execution.
+        """
+        xml_text = await self.fetch_feed()
+        loop = asyncio.get_running_loop()
+        parsed_feed = await loop.run_in_executor(self.executor, self.parse_feed, xml_text)
+        self.print_feed(parsed_feed)
 
-    for item in items:
-        _link = item.find("link").text if item.find("link") else ""
-        _title = item.find("title").text.replace("&nbsp;", " ") if item.find("title") else ""
-        _date = item.find("pubDate").text if item.find("pubDate") else ""
-        _description = item.find("description").text if item.find("description") else ""
-        parsed_feed.news_items[_link] = NewsPiece(title=_title, pubdate=_date, description=_description)
+    async def fetch_feed(self) -> str:
+        """
+        Fetches XML by feed link
+        """
+        async with self.session.get(self.feed_url) as response:
+            if response.status != 200:
+                raise Exception("Server response error")
+            return await response.text()
 
-    return parsed_feed
+    @staticmethod
+    def parse_feed(xml_text: str) -> Feed:
+        """
+        Parses XML, extracts name, description, pubdate, and news items.
+        Returns Feed class with updated attributes.
+        """
+        extract = BeautifulSoup(xml_text, "lxml-xml")
+        channel_name = extract.find("channel").find("title").text
+        items = extract.find_all("item")  # BS data object
+        parsed_feed = Feed(channel_name)
+
+        for item in items:
+            _link = item.find("link").text if item.find("link") else ""
+            _title = item.find("title").text.replace("&nbsp;", " ") if item.find("title") else ""
+            _date = item.find("pubDate").text if item.find("pubDate") else ""
+            _description = item.find("description").text if item.find("description") else ""
+            parsed_feed.news_items[_link] = NewsItem(title=_title, pubdate=_date, description=_description)
+
+        return parsed_feed
+
+    @staticmethod
+    def print_feed(parsed_feed: Feed):
+        """
+        Just a simple stdout.
+        """
+        for key, value in parsed_feed.news_items.items():
+            print(f"Title: {value.title}")
+            print(f"Date: {value.pubdate}")
+            print(f"Brief: {value.description}")
+            print(f"More: {key}")
+            print()
 
 
-def print_feed(parsed_feed: Feed):
-    for key, value in parsed_feed.news_items.items():
-        print(f"Заголовок: {value.title}")
-        print(f"Дата публикации: {value.pubdate}")
-        print(f"Описание: {value.description}")
-        print(f"Где почитать: {key}")
-        print()
-
-
-async def handle_feed(session, feed_url, executor):
-    xml_text = await fetch_feed(session, feed_url)
-    loop = asyncio.get_running_loop()
-    parsed_feed = await loop.run_in_executor(executor, parse_feed, xml_text)
-    print(f"parsed feed {feed_url}")
-#    print_feed(parsed_feed)
-
-
-async def worker(session, queue, executor):
+async def worker(queue: Queue, session: ClientSession, executor: ThreadPoolExecutor):
+    """
+    Worker.
+    Gets url from the queue
+    Checks if url is valid
+    Calls the use case with some MAGIC and a timeout, and handles TimeoutError
+    Says task_done() in any case.
+    """
     while True:
         feed_url = await queue.get()
         try:
             if feed_url is None:
                 break
-            await asyncio.wait_for(handle_feed(session, feed_url, executor), timeout=5)
-            print(f"Worker finished task {feed_url}")
+            use_case = FetchParseUseCase(session, executor, feed_url)
+            await asyncio.wait_for(use_case.execute(), timeout=5)
         except asyncio.TimeoutError:
-            print(f"Обработка фида {feed_url} заняла слишком много времени — прервана")
+            print(f"{feed_url} feed processing timed out.")
         finally:
             queue.task_done()

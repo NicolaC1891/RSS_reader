@@ -4,7 +4,7 @@ This module contains the core RSS feed class to retrieve, parse, and store RSS f
 
 import requests
 from bs4 import BeautifulSoup
-import data_storage as ds
+from from_old_project import data_storage as ds
 
 
 class RssFeed:
