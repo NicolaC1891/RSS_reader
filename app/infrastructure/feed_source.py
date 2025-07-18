@@ -1,8 +1,22 @@
 """
-Для теста взято 15 фидов, но я помню про оговорку "до бесконечности".
-Считаем, что конец списка неизвестен.
-Из этого вывод: грузить целиком в память не получится.
+Task: Feed list from 0 to infinite elements.
+Issue: List data structure does not support infinite elements.
+Reasonable assumption: Infinite source is a queue or async iterable.
+App logic: Cannot load the entire source at once (dynamic producer is required).
 """
+import asyncio
+
+
+async def infinite_source() -> str:
+    """
+    Mocking a replenishable feed source.
+    Sleep prevents memory overload.
+    """
+    feed = "http://news.rambler.ru/rss/politics/"
+    while True:
+        await asyncio.sleep(0.1)
+        yield feed
+
 
 rss_feeds = ["https://feeds.bbci.co.uk/news/world/europe/rss.xml",
              "https://moxie.foxnews.com/feedburner/latest.xml",
@@ -18,3 +32,7 @@ rss_feeds = ["https://feeds.bbci.co.uk/news/world/europe/rss.xml",
              "https://www.nytimes.com/svc/collections/v1/publish/https://www.nytimes.com/section/world/rss.xml",
              "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml",
              ]
+
+# rss_feeds = []
+
+# rss_feeds = infinite_source()

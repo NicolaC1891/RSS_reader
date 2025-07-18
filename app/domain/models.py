@@ -1,18 +1,18 @@
 class Feed:
     """
-    Класс для фида, хранит название и новостные итемы в виде инстансов NewsPiece.
-    Это для парсинга самих новостей, если понадобится.
+    Feed class, stores feed name and a dict of items from XML.
+    For future parsing of news texts if required.
     """
     def __init__(self, channel_name: str):
         self.channel_name: str = channel_name
         self.news_items: dict = {}
 
 
-class NewsPiece:
+class NewsItem:
     """
-    Класс для новости с основными атрибутами, содержащимися в рсс-фиде.
+    Class to store news item from XML feed.
     """
-    def __init__(self, title, pubdate, description):
+    def __init__(self, title: str, pubdate: str, description: str):
         self.title = title
         self.pubdate = pubdate
         self.description = description
